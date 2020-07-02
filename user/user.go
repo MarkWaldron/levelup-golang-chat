@@ -127,3 +127,7 @@ func (u *User) doConnect(rdb *redis.Client, channels ...string) error {
 	}()
 	return nil
 }
+
+func Chat(rdb *redis.Client, channel string, content string) error {
+	return rdb.Publish(channel, content).Err()
+}
