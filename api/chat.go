@@ -10,7 +10,7 @@ import (
 
 var upgrader websocket.Upgrader
 
-var connectedUser = make(map[string]*user.User)
+var connectedUsers = make(map[string]*user.User)
 
 func H(rdb *redis.Client, fn func(http.ResponseWriter, *http.Request, *redis.Client)) func(httpResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -18,7 +18,18 @@ func H(rdb *redis.Client, fn func(http.ResponseWriter, *http.Request, *redis.Cli
 	}
 }
 
+type msg struct {
+	Content string  `json:"content,omitempty"`
+	Channel string  `json:"channel,omitempty"`
+	Command int 		`json:"command,omitempty"`
+	Err 		string  `json:"err,omitempty"`
+}
 
+const (
+	commandSubscribe = iota
+	commandUnsubscribe
+	commandChat
+)
 
 func ChatWebSocketHandler(w http.ResponseWriter, r *http.Request, rdb *redis.Client) {
 
@@ -49,3 +60,38 @@ func ChatWebSocketHandler(w http.ResponseWriter, r *http.Request, rdb *redis.Cli
 			}
 		}
 }
+
+func onConnect(r *http.Request, conn *websocket.Conn, rdb *redis.Client) error {
+	username := r.URL.Query()["username"][0]
+	fmt.Println("connect from:", conn.RemoteAddr(), "user:", username)
+
+	u, err := user.Connect(rdb, username)
+	if err != nil {
+		return err
+	}
+	connectedUsers[username] = u
+	return nil
+}
+
+func onDisconnect(r *http.Request, conn *websocket.Conn, rdb *redis.Client) chan struct{} {
+
+	closeCh := make(chan struct{})
+
+	user := r.URL.Query()["username"][0]
+
+	conn.SetCloseHandler(func(code int, text string) err {
+		fmt.Println("connection closed for user", username)
+
+		u := connectedUsers[username]
+		if err := u.Disconnect(); err != nil {
+			return err
+		}
+		delete(connectedUsers, username)
+		close(closeCh)
+		return nil
+	})
+	
+	return closeCh
+}
+
+
