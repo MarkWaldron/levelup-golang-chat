@@ -12,7 +12,7 @@ var upgrader websocket.Upgrader
 
 var connectedUsers = make(map[string]*user.User)
 
-func H(rdb *redis.Client, fn func(http.ResponseWriter, *http.Request, *redis.Client)) func(httpResponseWriter, *http.Request) {
+func H(rdb *redis.Client, fn func(http.ResponseWriter, *http.Request, *redis.Client)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fn(w, r, rdb)
 	}
@@ -77,9 +77,9 @@ func onDisconnect(r *http.Request, conn *websocket.Conn, rdb *redis.Client) chan
 
 	closeCh := make(chan struct{})
 
-	user := r.URL.Query()["username"][0]
+	username := r.URL.Query()["username"][0]
 
-	conn.SetCloseHandler(func(code int, text string) err {
+	conn.SetCloseHandler(func(code int, text string) error {
 		fmt.Println("connection closed for user", username)
 
 		u := connectedUsers[username]
@@ -94,4 +94,54 @@ func onDisconnect(r *http.Request, conn *websocket.Conn, rdb *redis.Client) chan
 	return closeCh
 }
 
+func onUserMessage(conn *websocket.Conn, r *http.Request, rdb *redis.Client) {
 
+		var msg msg
+
+		if err := conn.ReadJSON(&msg); err != nil {
+			handleWSError(err, conn)
+			return
+		}
+
+		username := r.URL.Query()["username"][0]
+		u := connectedUsers[username]
+
+		switch msg.Command {
+		case commandSubscribe:
+			if err := u.Subscribe(rdb, msg.Channel); err != nil {
+				handleWSError(err, conn)
+			}
+		case commandUnsubscribe:
+			if err := u.Unsubscribe(rdb, msg.Channel); err != nil {
+				handleWSError(err, conn)
+			}
+		case commandChat:
+			if err := user.Chat(rdb, msg.Channel, msg.Content); err != nil {
+				handleWSError(err, conn)
+			}
+		}
+}
+
+func onChannelMessage(conn *websocket.Conn, r *http.Request) {
+
+	username := r.URL.Query()["username"][0]
+	u := connectedUsers[username]
+
+	go func() {
+		for m := range u.MessageChan {
+
+			msg := msg{
+				Content: m.Payload,
+				Channel: m.Channel,
+			}
+
+			if err := conn.WriteJSON(msg); err != nil {
+				fmt.Println(err)
+			}
+		}
+	}()
+}
+
+func handleWSError(err error, conn *websocket.Conn) {
+	_ = conn.WriteJSON(msg{Err: err.Error()})
+}
