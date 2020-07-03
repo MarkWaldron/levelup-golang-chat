@@ -1,6 +1,7 @@
 package user
 
 import (
+	"errors"
 	"fmt"
 	"github.com/go-redis/redis/v7"
 )
@@ -128,6 +129,53 @@ func (u *User) doConnect(rdb *redis.Client, channels ...string) error {
 	return nil
 }
 
+func (u *User) Disconnect() error {
+	if u.channelsHandler != nil {
+		if err := u.channelsHandler.Unsubscribe(); err != nil {
+			return err
+		}
+		if err := u.channelsHandler.Close(); err != nil {
+			return err
+		}
+	}
+	if u.listening {
+		u.stopListenerChan <- struct{}{}
+	}
+
+	close(u.MessageChan)
+
+	return nil
+}
+
 func Chat(rdb *redis.Client, channel string, content string) error {
 	return rdb.Publish(channel, content).Err()
+}
+
+func List(rdb *redis.Client) ([]string, error) {
+	return rdb.SMembers(usersKey).Result()
+}
+
+func GetChannels(rdb *redis.Client, username string) ([]string, error) {
+
+	if !rdb.SIsMember(usersKey, username).Val() {
+		return nil, errors.New("user does not exist")
+	}
+
+	var c []string
+
+	c1, err := rdb.SMembers(ChannelsKey).Result()
+	if err != nil {
+		return nil, errors.New("no existing channels for user")
+	}
+
+	c = append(c, c1...)
+
+	c2, err := rdb.SMembers(fmt.Sprintf(userChannelFmt, username)).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	c = append(c, c2...)
+
+	return c, nil
 }
